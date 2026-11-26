@@ -20,6 +20,8 @@ Core skills:
 
 Optional catalogued skills:
 
+- `volcengine-vpc-quota-capacity` — `volcengine-vpc`; Reconcile VPC quota scope, resource ownership and usage to check remaining capacity and proposed growth.
+- `volcengine-vpc-network-path` — `volcengine-vpc`; Diagnose effective VPC network paths and review least-privilege changes with association and time-scoped evidence.
 - `volcengine-tosutil` — `volcengine-storage`; Manage TOS buckets and objects with the tosutil command-line tool.
 - `volcengine-tls` — `volcengine-storage`; Operate Volcengine TLS log service with volclog: contract-first discover/describe/exec, log search, analysis, ingest, export, and error recovery.
 - `volcengine-tls-logcollector` — `volcengine-storage`; Design, validate, deploy, and troubleshoot TLS LogCollector collection on Linux hosts or Kubernetes through volclog.

@@ -116,6 +116,68 @@
       ]
     },
     {
+      "name": "volcengine-vpc",
+      "display_name": "Volcengine VPC",
+      "domain": "私有网络",
+      "domain_en": "VPC",
+      "default": false,
+      "description": "Review VPC quota capacity, network paths and least-privilege changes using read-only evidence.",
+      "short_description": "Check VPC capacity, network paths and least privilege",
+      "keywords": [
+        "vpc",
+        "私有网络",
+        "云网络",
+        "quota",
+        "配额",
+        "容量",
+        "剩余额度"
+      ],
+      "default_prompts": [
+        "核对项目下有多少个 VPC，以及账号地域剩余配额。",
+        "Check whether this VPC resource growth plan fits the current quotas."
+      ],
+      "skills": [
+        {
+          "name": "volcengine-vpc-quota-capacity",
+          "path": "plugins/volcengine-vpc/skills/volcengine-vpc-quota-capacity",
+          "summary": "Reconcile VPC quota scope, resource ownership and usage to check remaining capacity and proposed growth.",
+          "summary_zh": "按账号地域、项目及单对象口径核对 VPC 配额、真实用量、剩余额度和扩容计划。",
+          "keywords": [
+            "vpc",
+            "subnet",
+            "quota",
+            "capacity",
+            "配额",
+            "容量",
+            "剩余额度",
+            "项目数量",
+            "路由表限制",
+            "安全组规则数",
+            "网络ACL",
+            "ENI",
+            "流日志",
+            "流量镜像"
+          ]
+        },
+        {
+          "name": "volcengine-vpc-network-path",
+          "path": "plugins/volcengine-vpc/skills/volcengine-vpc-network-path",
+          "summary": "Diagnose effective VPC network paths and review least-privilege changes with association and time-scoped evidence.",
+          "summary_zh": "核对VPC有效网络路径与最小放行，校验关联、回程及共享规则影响面，区分配置与业务可达。",
+          "keywords": [
+            "vpc",
+            "security group",
+            "ACL",
+            "route",
+            "最小放行",
+            "端口不通",
+            "双栈",
+            "网络路径"
+          ]
+        }
+      ]
+    },
+    {
       "name": "volcengine-storage",
       "display_name": "Volcengine Storage",
       "domain": "存储",

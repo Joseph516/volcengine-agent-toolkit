@@ -37,6 +37,7 @@ For `ve arkcli ...`, `ve` translates the caller metadata. The Agent does not dup
 | Plugin | Product domain | Skills | Default |
 | --- | --- | --- | --- |
 | `volcengine-core` | Core | `volcengine-billing-and-cost-management`, `volcengine-cli`, `volcengine-troubleshooting`, `volcengine-knowledge-search`, `volcengine-find-skills`, `volcengine-feedback` | Yes |
+| `volcengine-vpc` | VPC | `volcengine-vpc-quota-capacity`, `volcengine-vpc-network-path` | No |
 | `volcengine-storage` | Storage | `volcengine-tosutil`, `volcengine-tls`, `volcengine-tls-logcollector` | No |
 | `volcengine-database` | Database | `volcengine-db-supabase` | No |
 | `volcengine-containers-middleware` | Containers and Middleware | `volcengine-vefaas` | No |
@@ -62,6 +63,8 @@ are maintained in their plugins; the sync script generates the copies.
 | [`volcengine-knowledge-search`](./skills/core/volcengine-knowledge-search/SKILL.md) | `volcengine-core` | Search and fetch official Volcengine documentation with ve docs search/fetch, without login. |
 | [`volcengine-find-skills`](./skills/core/volcengine-find-skills/SKILL.md) | `volcengine-core` | List all Volcengine skills so an agent can select and install missing capabilities. |
 | [`volcengine-feedback`](./skills/core/volcengine-feedback/SKILL.md) | `volcengine-core` | Draft and submit voluntary, redacted GitHub feedback on usage issues, capability needs, practical scenarios, and successful workflows without blocking the main task. |
+| [`volcengine-vpc-quota-capacity`](./skills/specialized/vpc/volcengine-vpc-quota-capacity/SKILL.md) | `volcengine-vpc` | Reconcile VPC quota scope, resource ownership and usage to check remaining capacity and proposed growth. |
+| [`volcengine-vpc-network-path`](./skills/specialized/vpc/volcengine-vpc-network-path/SKILL.md) | `volcengine-vpc` | Diagnose effective VPC network paths and review least-privilege changes with association and time-scoped evidence. |
 | [`volcengine-tosutil`](./skills/specialized/storage/volcengine-tosutil/SKILL.md) | `volcengine-storage` | Manage TOS buckets and objects with the tosutil command-line tool. |
 | [`volcengine-tls`](./skills/specialized/storage/volcengine-tls/SKILL.md) | `volcengine-storage` | Operate Volcengine TLS log service with volclog: contract-first discover/describe/exec, log search, analysis, ingest, export, and error recovery. |
 | [`volcengine-tls-logcollector`](./skills/specialized/storage/volcengine-tls-logcollector/SKILL.md) | `volcengine-storage` | Design, validate, deploy, and troubleshoot TLS LogCollector collection on Linux hosts or Kubernetes through volclog. |

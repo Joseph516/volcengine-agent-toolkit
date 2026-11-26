@@ -31,6 +31,7 @@ Agent 执行 `ve` 时必须注入 `VE_CALLER_TYPE=ai_agent`、`VE_CALLER_NAME=<a
 | Plugin | 产品分类 | Skills | 默认安装 |
 | --- | --- | --- | --- |
 | `volcengine-core` | 核心 | `volcengine-billing-and-cost-management`、`volcengine-cli`、`volcengine-troubleshooting`、`volcengine-knowledge-search`、`volcengine-find-skills`、`volcengine-feedback` | 是 |
+| `volcengine-vpc` | 私有网络 | `volcengine-vpc-quota-capacity`、`volcengine-vpc-network-path` | 否 |
 | `volcengine-storage` | 存储 | `volcengine-tosutil`、`volcengine-tls`、`volcengine-tls-logcollector` | 否 |
 | `volcengine-database` | 数据库 | `volcengine-db-supabase` | 否 |
 | `volcengine-containers-middleware` | 容器与中间件 | `volcengine-vefaas` | 否 |
@@ -55,6 +56,8 @@ Agent 执行 `ve` 时必须注入 `VE_CALLER_TYPE=ai_agent`、`VE_CALLER_NAME=<a
 | [`volcengine-knowledge-search`](./skills/core/volcengine-knowledge-search/SKILL.md) | `volcengine-core` | 使用 ve docs search/fetch 检索并获取火山引擎官方文档全文，无需登录。 |
 | [`volcengine-find-skills`](./skills/core/volcengine-find-skills/SKILL.md) | `volcengine-core` | 列出全部火山引擎技能，供 Agent 选择并安装当前缺失的能力。 |
 | [`volcengine-feedback`](./skills/core/volcengine-feedback/SKILL.md) | `volcengine-core` | 整理并提交脱敏的 GitHub 使用反馈，涵盖问题、能力需求、实际场景和成功实践，始终不阻塞主任务。 |
+| [`volcengine-vpc-quota-capacity`](./skills/specialized/vpc/volcengine-vpc-quota-capacity/SKILL.md) | `volcengine-vpc` | 按账号地域、项目及单对象口径核对 VPC 配额、真实用量、剩余额度和扩容计划。 |
+| [`volcengine-vpc-network-path`](./skills/specialized/vpc/volcengine-vpc-network-path/SKILL.md) | `volcengine-vpc` | 核对VPC有效网络路径与最小放行，校验关联、回程及共享规则影响面，区分配置与业务可达。 |
 | [`volcengine-tosutil`](./skills/specialized/storage/volcengine-tosutil/SKILL.md) | `volcengine-storage` | 使用 tosutil 命令行工具管理 TOS 桶和对象。 |
 | [`volcengine-tls`](./skills/specialized/storage/volcengine-tls/SKILL.md) | `volcengine-storage` | 使用 volclog 操作火山引擎日志服务 TLS：按契约发现/描述/执行，覆盖日志检索、分析、导入、导出与错误恢复。 |
 | [`volcengine-tls-logcollector`](./skills/specialized/storage/volcengine-tls-logcollector/SKILL.md) | `volcengine-storage` | 通过 volclog 设计、校验、部署并排查 Linux 主机或 Kubernetes 上的 TLS LogCollector 日志采集。 |
