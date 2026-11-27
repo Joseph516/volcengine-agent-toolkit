@@ -92,7 +92,7 @@ class NetworkChecks(unittest.TestCase):
     def test_longest_prefix_and_unassociated(self):
         d={'destination':'192.0.2.10','complete':True,'evidence':['saved routes'], 'associated':False,
            'routes':[{'cidr':'192.0.0.0/16','next_hop':'a'},{'cidr':'192.0.2.0/24','next_hop':'b'}]}
-        r=NET.route(d);self.assertEqual(r['candidates'][0]['next_hop'],'b');self.assertFalse(r['effective_for_subnet'])
+        r=NET.route(d);self.assertEqual(r['candidates'][0]['next_hop'],'b');self.assertIsNone(r['effective_for_subnet'])
         d['routes'].append({'cidr':'192.0.2.0/24','next_hop':'c'})
         self.assertEqual(NET.route(d)['status'],'ambiguous')
         d['complete']=False;self.assertEqual(NET.route(d)['status'],'unknown')

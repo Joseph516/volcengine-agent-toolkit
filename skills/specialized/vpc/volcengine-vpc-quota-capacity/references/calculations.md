@@ -59,3 +59,29 @@ VPC项目数量继续用summarize_vpc_quota.py的原始分页核对，并可通�
 `--answer-claims claims.json`对其输出路径校验，例如/project_inventory/visible、/quota/remaining、
 /quota/applicable_value_raw；不一致返回退出2。项目清单只展示project_inventory.vpc_ids对应项，
 不要把全账号可见清单作为项目明细。共享/自有/未知归属分别展示，不把列表长度覆盖配额用量。
+
+## compare_inventory：历史对象计数对齐
+
+复用证据契约，使用两个不重叠且先后有序的window；历史时点保存的原始查询仍以其真实observed_at校验，
+不能把当前回执改时间。支持DescribeVpcs、DescribeSubnets、DescribeRouteTableList的完整清单；
+不是配额最大值比较器，也不补造历史对象关联。
+
+```json
+{
+  "operation":"compare_inventory", "context":{"account":"<account-id>","region":"<region>"},
+  "inventory_action":"DescribeSubnets", "scope":{"project":"example"},
+  "fields":{"id":"/SubnetId","scope":{"project":"/ProjectName","vpc":"/VpcId"},"metrics":{"available_ips":"/AvailableIpAddressCount"}},
+  "before":{"window":{"start":"2026-01-01T10:00:00Z","end":"2026-01-01T10:01:00Z"},"pages":[{"items_ref":{"source":"before","pointer":"/Result/Subnets"},"total_ref":{"source":"before","pointer":"/Result/TotalCount"}}]},
+  "after":{"window":{"start":"2026-01-02T10:00:00Z","end":"2026-01-02T10:01:00Z"},"pages":[{"items_ref":{"source":"after","pointer":"/Result/Subnets"},"total_ref":{"source":"after","pointer":"/Result/TotalCount"}}]},
+  "answer_claims":[]
+}
+```
+
+两组原始request除分页外必须相同；每组唯一对象数等于原始TotalCount。先完整核对返回，再按实际对象scope字段筛选，
+不信任CLI过滤标记已生效。fields.scope应覆盖所比较对象的项目、所属VPC等适用边界，变更归属的对象为scope_changed。迁入/迁出保留ID及范围，范围外一侧的metrics为null，不展示无关指标。
+同ID/同范围的非负整数metrics给出after-before差值，null为incomparable；缺少对象为newly_observed/no_longer_observed，
+不是已创建/已删除证明。metrics:{}可只比较清单身份；字段缺失或分页不全则整体unknown，不把缺失当零。
+只描述变化，不自动评价风险改善。使用answer_claims核对/items/0/id、/items/0/delta/available_ips和before_count/after_count，
+保留原ID、状态与正负号。计数口径和指标字段语义仍须按实际API确认。
+
+当前适配需要原始TotalCount；缺少总量或不支持的形状保持unknown，不手工补造计数。

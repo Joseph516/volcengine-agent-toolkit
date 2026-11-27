@@ -55,16 +55,80 @@ def route(data):
         net = ipaddress.ip_network(entry['cidr'], strict=True)
         if net.version == destination.version and destination in net:
             candidates.append((net.prefixlen, entry))
+    boundary = {'effective_for_subnet': None, 'verification': 'unbound_route_arithmetic',
+                'correct_gateway': 'not_verified', 'runtime_reachability': 'not_verified'}
     if data.get('complete') is not True or not data.get('evidence'):
-        return {'status': 'unknown', 'reason': 'Route list incomplete or evidence missing'}
+        return dict(boundary, status='unknown', reason='Route list incomplete or evidence missing')
     if not candidates:
-        return {'status': 'no_match', 'note': 'No matching entry in supplied table only'}
+        return dict(boundary, status='no_match', note='No matching entry in supplied table only')
     prefix = max(x[0] for x in candidates)
     best = [entry for size, entry in candidates if size == prefix]
-    return {'status': 'selected' if len(best) == 1 else 'ambiguous', 'candidates': best,
-            'effective_for_subnet': data.get('associated') is True,
-            'correct_gateway': 'not_verified',
+    return {**boundary, 'status': 'selected' if len(best) == 1 else 'ambiguous', 'candidates': best,
             'note': 'Longest prefix only; ties require product-specific resolution. No reachability proof'}
+
+
+def route_evidence(data, bundle):
+    """Bind a supplied table to the source subnet; LPM is still not gateway health."""
+    evidence = Evidence(bundle, data['context'], data['window'])
+    result = {'status': 'unknown', 'effective_for_subnet': None,
+              'correct_gateway': 'not_verified', 'runtime_reachability': 'not_verified'}
+    try:
+        table = evidence.read(data['table_ref'])
+        table_id = pointer(table, data['table_id_pointer'])
+        if not isinstance(table_id, str) or not table_id or table_id != data['table_id']:
+            raise ValueError('Route table identity mismatch')
+        rows, seen, total = [], set(), None
+        for page in data['route_pages']:
+            if page['items_ref']['source'] != page['total_ref']['source']:
+                raise ValueError('Route entries and total must come from the same response')
+            request = bundle[page['items_ref']['source']]['request']
+            if not isinstance(request, dict):
+                raise ValueError('Original route request missing')
+            filters = {k: v for k, v in request.items()
+                       if k not in ('PageNumber', 'PageSize', 'NextToken', 'MaxResults')}
+            if filters != {'Action': 'DescribeRouteEntryList', 'Region': data['context']['region'],
+                           'RouteTableId': table_id}:
+                raise ValueError('Require route-table-only query; other filters can hide matching routes')
+            entries = evidence.read(page['items_ref'])
+            page_total = evidence.read(page['total_ref'])
+            if type(page_total) is not int or page_total < 0 or (total is not None and total != page_total):
+                raise ValueError('Unstable route total')
+            total = page_total
+            if not isinstance(entries, list):
+                raise ValueError('Route list missing')
+            for entry in entries:
+                if pointer(entry, data['fields']['table_id']) != table_id:
+                    raise ValueError('Returned route belongs to a different table')
+                ident = pointer(entry, data['fields']['id'])
+                if not isinstance(ident, str) or not ident or ident in seen:
+                    raise ValueError('Missing or duplicate route identity')
+                seen.add(ident)
+                rows.append({'id': ident, 'cidr': pointer(entry, data['fields']['cidr']),
+                             'next_hop': pointer(entry, data['fields']['next_hop'])})
+        if total is None or len(seen) != total:
+            raise ValueError('Incomplete route inventory')
+        result.update(route({'destination': data['destination'], 'routes': rows,
+                             'complete': True, 'evidence': evidence.used}))
+        result['table_id'] = table_id
+        # SubnetIds on a table, system routes and caller-supplied associated are not proof.
+        try:
+            subnet = evidence.read(data['subnet_ref'])
+            subnet_id = pointer(subnet, data['subnet_id_pointer'])
+            if not isinstance(subnet_id, str) or not subnet_id or subnet_id != data['subnet_id']:
+                raise ValueError('Source subnet identity mismatch')
+            effective_table = pointer(subnet, data['associated_table_pointer'])
+            if not isinstance(effective_table, str) or not effective_table:
+                raise ValueError('Effective route table unknown')
+            result.update(subnet_id=subnet_id, associated_table_id=effective_table,
+                          effective_for_subnet=effective_table == table_id)
+        except (KeyError, ValueError, TypeError, IndexError) as exc:
+            result['association_reason'] = str(exc)
+        result['verification'] = 'bound_table_entries'
+    except (KeyError, ValueError, TypeError, IndexError) as exc:
+        result['reason'] = str(exc)
+    result['evidence'] = evidence.used
+    result['note'] = 'Selection in this table only; unknown/false association does not prove actual packet loss. No gateway health or historical root-cause proof.'
+    return result
 
 
 def path(data):
@@ -146,8 +210,11 @@ def sg_scope(data, bundle):
         family = data['family']
         if family not in (4, 6):
             raise ValueError('family must be 4 or 6')
-        dest = [str(ipaddress.ip_network(a)) for m in members for a in m['addresses']
-                if ipaddress.ip_address(a).version == family]
+        members = [{'eni_id': m['eni_id'],
+                    'addresses': [a for a in m['addresses'] if ipaddress.ip_address(a).version == family]}
+                   for m in members]
+        members = [m for m in members if m['addresses']]
+        dest = [str(ipaddress.ip_network(a)) for m in members for a in m['addresses']]
         sources = networks(data['rule_sources'])
         if not sources or any(n.version != family for n in sources):
             raise ValueError('Rule source family mismatch or empty sources')
@@ -155,7 +222,8 @@ def sg_scope(data, bundle):
             raise ValueError('No matching destination addresses established')
         result = scope_change({'allowed': data['allowed'],
                                'proposed': {'sources': data['rule_sources'], 'destinations': dest}})
-        result.update(affected_enis=members, derived_destinations=dest,
+        result.update(affected_enis=members, affected_eni_count=len(members),
+                      destination_address_count=len(set(dest)), derived_destinations=dest,
                       verification='bound_inventory_potential_impact', minimum_change_verified=False,
                       note='Potential ingress SG rule scope for one fixed protocol/port; existing rules and other layers are not simulated. within_scope is not proof of effective reachability or overall least privilege.')
     except (KeyError, ValueError, TypeError, IndexError) as exc:
@@ -253,10 +321,12 @@ def path_evidence(data, bundle):
     return result
 
 
-def run(data, evidence=None):
+def calculate(data, evidence=None):
     if not isinstance(data, dict):
         raise ValueError('snapshot must be an object')
     operation = data['operation']
+    if operation == 'route_evidence':
+        return route_evidence(data, evidence)
     if operation == 'sg_scope':
         return sg_scope(data, evidence)
     if operation == 'path_evidence':
@@ -267,7 +337,13 @@ def run(data, evidence=None):
         return route(data)
     if operation == 'path':
         return path(data)
-    raise ValueError('operation must be sg_scope, path_evidence, scope, route or path')
+    raise ValueError('operation must be route_evidence, sg_scope, path_evidence, scope, route or path')
+
+
+def run(data, evidence=None):
+    result = calculate(data, evidence)
+    result['answer_check'] = verify_claims(result, data.get('answer_claims', []))
+    return result
 
 
 if __name__ == '__main__':

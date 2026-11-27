@@ -3,6 +3,7 @@ name: volcengine-vpc-network-path
 description: >-
   Diagnose Volcengine VPC network paths and review least-privilege changes using ENI,
   security-group, ACL and route associations. 用于端口不通、双栈路径、最小放行与共享规则影响面核对；
+  也用于历史流日志、已删除网卡/路由的故障分析和现有流日志复用评估。
   区分配置推演、运行态验证和历史故障证据。默认只读分析，不自动修改规则。
 license: MIT
 metadata:
@@ -22,11 +23,14 @@ metadata:
   不按名称前缀或任意第一条匹配猜测。业务名未说明资源类型时，先在授权范围核对VPC/子网等候选；
   不因找不到同名VPC就认定对象不存在或直接索要VPC ID。缺少实际端口时给条件结论，
   不替用户猜端口。历史问题保留故障时间，当前查询不能替代历史配置。
+  重建实例复用旧网卡/IP时分开记录历史与当前对象；当前挂载关系、创建时间或日志仍可查询，
+  均不能证明故障时挂载到哪台实例、当时只有哪些网卡。缺历史关联就保留未知。
 - 使用已安装的 `volcengine-cli` 获取实际接口帮助及字段语义；按用户已选身份和地域查询，
   不自行切换身份。每次调用带 `VE_CALLER_TYPE=ai_agent`、实际宿主的 `VE_CALLER_NAME`、
   `VE_SKILL_NAME=volcengine-vpc-network-path`。不打印凭据或整份环境变量。
 - 精确地址定位 ENI，再核对 VPC、子网、挂载实例、全部关联 SG、ACL 和路由表。
   不把实例的第一张网卡当成目标网卡，不把 ACL/VPC 同属一个 VPC 当成已绑定。
+  未挂载ENI仍可审查配置，但不能当作正在发包/接收的运行端点。
 - 规则和影响面查询要保留完整分页、错误回执、查询参数、时间和 RequestId。
   字段不存在、投影为 null、截断或 403 均不是零对象；回看原始返回，仍无法确定则未知。
   查询共享 SG 关联时包括未挂载 ENI，不能用 ECS 列表替代全量关联查询。
@@ -49,6 +53,8 @@ metadata:
    下一跳名字不是“正确网关”证据，还需设计意图、挂载和转发能力、回程/NAT等证据。
 5. 将已核验且同查询窗口的关卡交给离线校验器组合。历史日志 REJECT 不直接定位 SG/ACL，
    NODATA不证明客户端停止，未定义结果码不推出TCP报文序列。
+   ACCEPT只表示日志记录的过滤结果，不证明握手或应用成功；包数/字节数不能推算SYN/ACK或SSH banner。
+   仅有历史日志时直接报告可观测事实和证据缺口，不为运行配置校验器补造历史配置。
 
 ## 最小放行与计算
 
@@ -57,9 +63,10 @@ metadata:
 需要“只放这一对”时，考虑独立策略绑定或其他支持的隔离方式，并核验既有绑定/规则
 不会继续扩大范围。不要删除共享规则或仅新增accept就声称收窄原有允许范围。
 
-使用 [scripts/check_network.py](scripts/check_network.py)：共享SG入向规则用 `sg_scope`，
+使用 [scripts/check_network.py](scripts/check_network.py)：提出共享SG入向放行方案时运行 `sg_scope`，
 从完整ENI清单直接推导目的地址和潜在受影响网卡，不能自填单个目的地址代替影响面。
 清单包含未挂载ENI、辅助地址和对应地址族；受权限限制不能完整枚举时报告未知。
+UsedIpCount是IP计数，不是ENI数量；分别引用affected_eni_count和destination_address_count。
 新增源CIDR大于用户授权集合时，不能以“临时”“排障”名义称为最小放行。
 `within_scope`只说明该候选规则的集合范围；还须检查所有既有允许规则及其他层策略，
 不能据此保证整体最小权限。多组源/目的配对按固定协议/端口分别计算，禁止合并成扩大范围的笛卡尔积。
@@ -68,12 +75,22 @@ metadata:
 校验保存的观测时间是否覆盖目标窗口。ACL关联为null保持未知，确认为空才可以按无ACL处理。
 原始证据保存方式见 [references/evidence.md](references/evidence.md)，模式契约见
 [references/checks.md](references/checks.md)。旧scope/path仅验证调用方输入的集合/布尔计算，
-不可当成证据核实。最长前缀计算不证明下一跳就是业务设计中的正确网关。
+不可当成证据核实。涉及源子网实际选路时运行 `route_evidence`，用原始子网有效路由表字段
+与完整路由条目绑定；只给历史表时可用旧route计算表内最长前缀，关联保持未知。
+系统InnerSubnet条目不证明源子网使用该表，表的SubnetIds=null也不证明没有关联。
+最长前缀计算不证明下一跳就是业务设计中的正确网关。
 
 校验器不模拟完整厂商规则，也不验证历史唯一根因。脚本输出unknown或拒绝证据时，
 补取原始证据或保留缺口，不能改observed_at/applicable/作用域来获得通过。
 
 ## 交付与验证边界
+
+使用计算器时，最终答案里的关联状态、选路、影响面计数和确定性字段通过 `answer_claims`
+逐项核对输出，mismatch先修答案。未调用校验器不声称通过；未声明的自由文本不在程序验证范围内。
+保留unknown/not_verified：不能在正文另写确定根因、实际首个阻断点或必然丢包。
+规则盘点保留用户项目/对象范围，按每个策略的真实规则汇总，不把某个默认SG的规则套给其他SG；
+汇总数量由列出的对象ID去重计算。
+流日志复用按原字段分别列LogProjectId与LogTopicId；应用使用哪张网卡应取证或澄清，不按“通常主网卡”选定。
 
 - 先回答已确认的配置问题，给出精确影响范围、必要改动与尚缺证据；不要扩写未经核实的旁支结论。
 - 分别标记配置推演、配置回读、实际连接验证。只有真实端点探测和服务状态等证据才能

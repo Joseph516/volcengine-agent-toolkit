@@ -21,7 +21,8 @@
 ```
 
 没有完整列表/证据为unknown，同最长前缀多条为ambiguous，不猜ECMP或优先级。
-associated只代表已核实关联，本检查不证明下一跳健康或可达。CIDR必须合法网络边界。
+旧route忽略调用方associated，effective_for_subnet始终null（未知），verification为unbound_route_arithmetic。
+该模式仅做表内选路；需要关联结论时用route_evidence。CIDR必须合法网络边界。
 
 ## path（仅假设关卡计算）：同时间快照关卡合取
 
@@ -62,6 +63,7 @@ fields.addresses列出目标地址族所有主/辅助地址数组及其值路径
 不要改写API原文伪装支持。每页来源保存的request含Action/Region及实际分页参数，拒绝其他过滤项，
 防止只查询目标ECS/已挂载网卡而遗漏共享成员；不得超出用户授权去查询。
 脚本核对稳定总量和唯一ENI数，从全部成员地址派生destinations，忽略调用方自填的proposed。
+affected_enis/affected_eni_count只包括具有规则地址族地址的成员，destination_address_count按该地址族去重。
 输出是新增SG入向规则的**潜在影响面**，不证明每条路径实际可达；既有策略可能扩大范围，
 minimum_change_verified始终false。支持一个固定协议/端口下的源、目的集合，出向及多流组合不适用。
 
@@ -104,3 +106,34 @@ unknown，不能把“某层配置阻断”扩写为唯一历史根因。runtime
 SG/ACL属性接口返回的内联完整规则数组可用rules_mode:inline_attributes替代总数：
 仅接受对应DescribeSecurityGroupAttributes/DescribeNetworkAclAttributes且原请求无分页参数。
 这不支持将某一分页、单条规则或投影null冒充全量。接口形状不支持时报告未知，不制造计数。
+
+## route_evidence：源子网有效表与表内选路
+
+使用同一证据契约和`--evidence`。顶层包含context/window，参数示例如下；所有pointer按真实回执映射，不能改写原文：
+
+```json
+{
+  "operation":"route_evidence", "destination":"192.0.2.10",
+  "table_id":"vtb-example", "table_ref":{"source":"table","pointer":"/Result/RouteTables/0"},
+  "table_id_pointer":"/RouteTableId",
+  "subnet_id":"subnet-example", "subnet_ref":{"source":"subnet","pointer":"/Result/Subnets/0"},
+  "subnet_id_pointer":"/SubnetId", "associated_table_pointer":"/RouteTable/RouteTableId",
+  "route_pages":[{"items_ref":{"source":"routes","pointer":"/Result/RouteEntries"},"total_ref":{"source":"routes","pointer":"/Result/TotalCount"}}],
+  "fields":{"id":"/RouteEntryId","table_id":"/RouteTableId","cidr":"/DestinationCidrBlock","next_hop":"/NextHopId"},
+  "answer_claims":[{"field":"/correct_gateway","value":"not_verified"}]
+}
+```
+
+支持RouteTableId过滤的DescribeRouteEntryList完整分页（仅允许额外分页参数）；无TotalCount、重复ID、其他过滤或缺页保持unknown。
+源子网原始对象必须含已核实语义的有效路由表ID；字符串等于目标表得到true，另一个明确表ID得到false，
+null/缺字段/来源时效不符得到null。关联未知时仍可返回该表内最长前缀。不能从false推断实际使用的另一张表没有路由。
+同VPC、系统InnerSubnet条目、表侧SubnetIds投影和自填associated都不能替代源子网证据。
+这里不检查网关运行态或数据面；correct_gateway/runtime_reachability始终not_verified。
+
+## 答案结构化核对
+
+所有网络模式均可传answer_claims：`[{"field":"/effective_for_subnet","value":null}]`。
+field是计算结果JSON pointer，value是答案拟交付值；类型或值不同则answer_check.status=mismatch，
+不存在字段也拒绝。空列表为not_checked。引用/candidates/0/next_hop、/affected_eni_count、
+/destination_address_count、/configuration等实际结果字段，不能把null改为false或把not_verified改为已确认。
+只校验声明字段；未列入claims的正文、规则语义与来源真实性不由该检查证明。退出0不代表业务通过。

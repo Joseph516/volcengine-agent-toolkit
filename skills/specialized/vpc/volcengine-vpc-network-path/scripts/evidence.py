@@ -76,9 +76,24 @@ class Evidence:
             raise ValueError('Original request account mismatch')
         digest = hashlib.sha256(json.dumps(source, sort_keys=True, ensure_ascii=False,
                                           separators=(',', ':')).encode()).hexdigest()
+        value = pointer(raw, ref['pointer'])
+        paths = self.used.get(ref['source'], {}).get('pointers', [])
         self.used[ref['source']] = {'sha256': digest, 'request_id': metadata['RequestId'],
+                                    'action': request.get('Action'),
+                                    'pointers': sorted(set(paths + [ref['pointer']])),
                                     'observed_at': source.get('observed_at')}
-        return pointer(raw, ref['pointer'])
+        return value
+
+
+def exact_value(expected, actual):
+    """JSON structural equality without Python's True == 1 coercion at any depth."""
+    if type(expected) is not type(actual):
+        return False
+    if isinstance(expected, dict):
+        return expected.keys() == actual.keys() and all(exact_value(v, actual[k]) for k, v in expected.items())
+    if isinstance(expected, list):
+        return len(expected) == len(actual) and all(exact_value(a, b) for a, b in zip(expected, actual))
+    return expected == actual
 
 
 def verify_claims(result, claims):
@@ -91,7 +106,7 @@ def verify_claims(result, claims):
             expected = pointer(result, claim['field'])
             actual = claim['value']
             # bool is not a numeric count; preserve exact structured values.
-            matches = (type(expected) is type(actual) and expected == actual)
+            matches = exact_value(expected, actual)
             if not matches:
                 errors.append({'index': i, 'field': claim['field'], 'expected': expected})
         except (KeyError, TypeError, ValueError, IndexError):

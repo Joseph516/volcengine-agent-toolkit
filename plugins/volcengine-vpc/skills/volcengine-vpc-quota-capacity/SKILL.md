@@ -4,7 +4,7 @@ description: >-
   Check Volcengine VPC quotas, scoped resource usage, remaining capacity and proposed growth.
   Use for VPC/subnet counts, route-table or route-entry limits, security-group/network-ACL
   rule capacity, ENI/flow-log/traffic-mirror capacity, and read-only quota reviews.
-  核对火山引擎 VPC 配额、项目资源数量、剩余额度及新增资源是否超限；区分账号地域、
+  核对火山引擎 VPC 配额、项目资源数量、剩余额度、历史容量变化及新增资源是否超限；区分账号地域、
   项目和单对象口径。用于配额与容量核对，不用于执行资源变更或提交提额申请。
 license: MIT
 metadata:
@@ -75,6 +75,11 @@ metadata:
 - 巡检按用户阈值或已读取规则标记风险；没有阈值时报告用量/余量和数据缺口。
   不因为资源带测试标签、未绑定或没有告警规则就判定必须删除/整改。
 
+历史对比先按对象ID及相同项目/VPC范围对齐，再比较同一字段。历史配额最大值未注明所属对象时，
+不能与当前某个VPC用量相减，或断言该VPC新增了哪些资源。对象不再出现只表示该查询范围未观测到，
+不直接称已删除、业务无影响或风险改善；改名按ID视为同一对象。查询参数不保证过滤成功，
+须核对返回的ProjectName等字段；项目外对象不能混入项目清单。
+
 ## 离线计算校验
 
 凡输出实际配额、用量、余量、使用率或可申请档位，都运行离线校验；单对象也不跳过。
@@ -87,9 +92,11 @@ VPC清单/项目计数用 `summarize_vpc_quota.py`；其他配额使用
 保存证据方式见 [references/evidence.md](references/evidence.md)，计算与答案字段契约见
 [references/calculations.md](references/calculations.md)。旧capacity模式仅作假设算术，
 不能据其fits/exceeds声称原始证据已核实。CIDR仍用addresses模式。
+历史对象清单/计数对比用 `compare_inventory`：分别引用两时点原始清单及窗口，输出对象ID、
+范围和差值；缺历史对象级数据时报告不可比，不用配额最大值伪造对象计数。
 
 最终明细直接复用脚本生成的 `answer_table` 或VPC汇总结构。草稿中所有业务数字
-（包括附带的可申请档位、使用率、项目数量）用 `answer_claims` 指向输出字段核对；
+及资源ID（包括附带的可申请档位、使用率、项目数量）用 `answer_claims` 指向输出字段核对；
 若有mismatch先修正草稿。未列入claims的文字不在程序校验范围内，不能宣称全文已验证。
 使用率直接用生成百分比，不另写可能矛盾的“个位数”“接近耗尽”等摘要。
 

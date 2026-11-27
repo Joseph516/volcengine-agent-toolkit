@@ -85,7 +85,8 @@ def capacity_evidence(data, bundle):
             if identity != item['quota_identity']:
                 raise ValueError('Quota identity/dimensions mismatch')
             region = data['context']['region']
-            if not any(d == {'Name': 'region_code', 'Value': region} for d in identity['Dimensions']):
+            if not any(isinstance(d, dict) and d.get('Name') == 'region_code' and d.get('Value') == region
+                       for d in identity['Dimensions']):
                 raise ValueError('Quota dimensions do not cover selected region')
             if not isinstance(quota.get('Trn'), str):
                 raise ValueError('Quota TRN missing')
@@ -149,16 +150,101 @@ def capacity_evidence(data, bundle):
     return result
 
 
+def compare_inventory(data, bundle):
+    """Compare object counters in two complete captures, never assign quota maxima to objects."""
+    result = {'status': 'unknown', 'items': [], 'evidence': {},
+              'boundary': 'Inventory changes only; absence is not proof of deletion or risk improvement. No historical attachment or causal inference.'}
+    try:
+        if _proof.timestamp(data['before']['window']['end']) >= _proof.timestamp(data['after']['window']['start']):
+            raise ValueError('Require ordered, non-overlapping snapshot windows')
+        if data['inventory_action'] not in ('DescribeVpcs', 'DescribeSubnets', 'DescribeRouteTableList'):
+            raise ValueError('Use object inventories, not quota maxima, for object-level history')
+        snapshots = []
+        request_scope = None
+        for side in ('before', 'after'):
+            evidence = Evidence(bundle, data['context'], data[side]['window'])
+            objects, seen, total = {}, set(), None
+            try:
+                for page in data[side]['pages']:
+                    if page['items_ref']['source'] != page['total_ref']['source']:
+                        raise ValueError('Inventory and total must come from the same response')
+                    request = bundle[page['items_ref']['source']]['request']
+                    if not isinstance(request, dict):
+                        raise ValueError('Original inventory request missing')
+                    filters = {k: v for k, v in request.items()
+                               if k not in ('PageNumber', 'PageSize', 'NextToken', 'MaxResults')}
+                    if filters.get('Action') != data['inventory_action']:
+                        raise ValueError('Inventory action mismatch')
+                    if request_scope is not None and request_scope != filters:
+                        raise ValueError('Snapshot query scopes differ')
+                    request_scope = filters
+                    entries = evidence.read(page['items_ref'])
+                    page_total = evidence.read(page['total_ref'])
+                    if type(page_total) is not int or page_total < 0 or (total is not None and total != page_total):
+                        raise ValueError('Unstable inventory total')
+                    total = page_total
+                    if not isinstance(entries, list):
+                        raise ValueError('Inventory missing')
+                    for obj in entries:
+                        ident = pointer(obj, data['fields']['id'])
+                        if not isinstance(ident, str) or not ident or ident in seen:
+                            raise ValueError('Missing or duplicate object ID')
+                        seen.add(ident)
+                        scope = {k: pointer(obj, v) for k, v in data['fields']['scope'].items()}
+                        if not scope or any(not isinstance(v, str) or not v for v in scope.values()):
+                            raise ValueError('Object scope missing')
+                        if not data['scope'] or not set(data['scope']).issubset(scope):
+                            raise ValueError('Requested scope fields missing')
+                        in_scope = all(scope[k] == v for k, v in data['scope'].items())
+                        # Retain identity/scope to distinguish a moved object from an absent one.
+                        # Do not output metrics for objects outside the requested project/VPC.
+                        metrics = ({k: pointer(obj, v) for k, v in data['fields']['metrics'].items()}
+                                   if in_scope else None)
+                        objects[ident] = {'scope': scope, 'metrics': metrics}
+                if total is None or len(seen) != total:
+                    raise ValueError('Incomplete inventory')
+                snapshots.append(objects)
+            finally:
+                result['evidence'].update(evidence.used)
+        before, after = snapshots
+        rows = []
+        relevant = lambda items: {key for key, obj in items.items() if obj['metrics'] is not None}
+        for ident in sorted(relevant(before) | relevant(after)):
+            old, new = before.get(ident), after.get(ident)
+            row = {'id': ident, 'status': 'comparable', 'before': old, 'after': new}
+            if old is None or new is None:
+                row['status'] = 'newly_observed' if old is None else 'no_longer_observed'
+            elif old['scope'] != new['scope']:
+                row['status'] = 'scope_changed'
+            else:
+                row['delta'] = {}
+                for key in old['metrics']:
+                    a, b = old['metrics'][key], new['metrics'][key]
+                    if type(a) is not int or type(b) is not int or a < 0 or b < 0:
+                        row['delta'][key] = None
+                        row['status'] = 'incomparable'
+                    else:
+                        row['delta'][key] = b - a
+            rows.append(row)
+        result.update(status='compared', items=rows, before_count=len(relevant(before)), after_count=len(relevant(after)))
+    except (KeyError, TypeError, ValueError, IndexError) as exc:
+        result['reason'] = str(exc)
+    result['answer_check'] = verify_claims(result, data.get('answer_claims', []))
+    return result
+
+
 def run(data, evidence=None):
     if not isinstance(data, dict):
         raise ValueError('snapshot must be an object')
+    if data['operation'] == 'compare_inventory':
+        return compare_inventory(data, evidence)
     if data['operation'] == 'capacity_evidence':
         return capacity_evidence(data, evidence)
     if data['operation'] == 'capacity':
         return capacity(data['items'])
     if data['operation'] == 'addresses':
         return addresses(data['parent'], data['cidrs'])
-    raise ValueError('operation must be capacity_evidence, capacity or addresses')
+    raise ValueError('operation must be compare_inventory, capacity_evidence, capacity or addresses')
 
 
 if __name__ == '__main__':
