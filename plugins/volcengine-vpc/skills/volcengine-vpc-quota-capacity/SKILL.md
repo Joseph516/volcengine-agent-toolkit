@@ -77,10 +77,21 @@ metadata:
 
 ## 离线计算校验
 
-涉及多个对象/方向的新增容量或CIDR规划时，使用 [scripts/check_capacity.py](scripts/check_capacity.py)，
-输入契约见 [references/calculations.md](references/calculations.md)。每项配额与用量逐维度匹配，
-默认配额不能作为实际配额；CIDR检查严格边界、包含和重叠，不心算或自动修正错误地址。
-脚本只校验整理后的输入，不能替代原始响应与字段语义核对。
+凡输出实际配额、用量、余量、使用率或可申请档位，都运行离线校验；单对象也不跳过。
+VPC清单/项目计数用 `summarize_vpc_quota.py`；其他配额使用
+[scripts/check_capacity.py](scripts/check_capacity.py) 的 `capacity_evidence` 模式，
+从同一原始配额对象读取QuotaCode、Dimensions、TotalQuota、TotalUsage与ApplicableValue，
+不要手工复制邻项数字。对象计数口径未定（如ACL默认规则是否占额）就保留未知/条件计算，
+不允许靠填写actual、complete=true把两个互斥口径都变成事实。
+
+保存证据方式见 [references/evidence.md](references/evidence.md)，计算与答案字段契约见
+[references/calculations.md](references/calculations.md)。旧capacity模式仅作假设算术，
+不能据其fits/exceeds声称原始证据已核实。CIDR仍用addresses模式。
+
+最终明细直接复用脚本生成的 `answer_table` 或VPC汇总结构。草稿中所有业务数字
+（包括附带的可申请档位、使用率、项目数量）用 `answer_claims` 指向输出字段核对；
+若有mismatch先修正草稿。未列入claims的文字不在程序校验范围内，不能宣称全文已验证。
+使用率直接用生成百分比，不另写可能矛盾的“个位数”“接近耗尽”等摘要。
 
 ## 交付
 

@@ -10,6 +10,11 @@ from pathlib import Path
 import sys
 from typing import Any
 
+import importlib.util
+_spec = importlib.util.spec_from_file_location('vpc_evidence', Path(__file__).with_name('evidence.py'))
+_proof = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_proof)
+
 
 class EvidenceError(ValueError):
     """The snapshot cannot support an exact capacity calculation."""
@@ -198,15 +203,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--snapshot", type=Path, required=True)
     parser.add_argument("--planned-vpcs", type=int, default=0)
+    parser.add_argument("--answer-claims", type=Path, help="Structured final answer claims to compare")
     args = parser.parse_args()
     try:
         result = summarize(json.loads(args.snapshot.read_text(encoding="utf-8")), args.planned_vpcs)
-    except (EvidenceError, OSError, json.JSONDecodeError) as exc:
+        if args.answer_claims:
+            result["answer_check"] = _proof.verify_claims(result, json.loads(args.answer_claims.read_text()))
+    except (EvidenceError, ValueError, OSError, json.JSONDecodeError) as exc:
         # Do not echo raw API payloads or local file contents in an error.
         message = str(exc) if isinstance(exc, EvidenceError) else type(exc).__name__
         print(json.dumps({"status": "error", "error": message}, ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False, indent=2))
+    if result.get("answer_check", {}).get("status") == "mismatch":
+        return 2
     return 0 if result["status"] == "ok" else 2
 
 

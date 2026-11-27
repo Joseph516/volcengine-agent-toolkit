@@ -1,7 +1,7 @@
 {
   "name": "volcengine-vpc",
   "description": "Review VPC quota capacity, network paths and least-privilege changes using read-only evidence.",
-  "version": "1.3.6",
+  "version": "1.3.7",
   "author": {
     "name": "Volcengine Team"
   },

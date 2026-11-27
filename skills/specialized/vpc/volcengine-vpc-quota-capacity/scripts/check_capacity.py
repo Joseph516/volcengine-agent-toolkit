@@ -5,6 +5,13 @@ import ipaddress
 import json
 import sys
 
+import importlib.util
+from pathlib import Path
+_spec = importlib.util.spec_from_file_location('vpc_evidence', Path(__file__).with_name('evidence.py'))
+_proof = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_proof)
+Evidence, pointer, verify_claims = _proof.Evidence, _proof.pointer, _proof.verify_claims
+
 
 def count(value, field):
     if type(value) is not int or value < 0:
@@ -37,7 +44,9 @@ def capacity(items):
                        status='fits' if remaining >= growth else 'exceeds',
                        evidence=item['evidence'])
         results.append(row)
-    return {'items': results, 'scope': 'provided snapshot only'}
+    return {'items': results, 'scope': 'provided snapshot only',
+            'verification': 'unbound_arithmetic_only',
+            'warning': 'basis/complete/evidence labels do not verify original data; do not present as confirmed capacity'}
 
 
 def addresses(parent, entries):
@@ -65,23 +74,102 @@ def addresses(parent, entries):
             'errors': errors, 'note': 'Address counts include reserved addresses; not allocatable IP counts'}
 
 
-def run(data):
+def capacity_evidence(data, bundle):
+    evidence = Evidence(bundle, data['context'], data['window'])
+    rows, identities = [], set()
+    for item in data['items']:
+        row = {'id': item['id'], 'status': 'unknown'}
+        try:
+            quota = evidence.read(item['quota_ref'])
+            identity = {k: quota[k] for k in ('ProviderCode', 'QuotaCode', 'Dimensions')}
+            if identity != item['quota_identity']:
+                raise ValueError('Quota identity/dimensions mismatch')
+            region = data['context']['region']
+            if not any(d == {'Name': 'region_code', 'Value': region} for d in identity['Dimensions']):
+                raise ValueError('Quota dimensions do not cover selected region')
+            if not isinstance(quota.get('Trn'), str):
+                raise ValueError('Quota TRN missing')
+            trn = quota['Trn'].split(':')
+            if (len(trn) != 7 or trn[:3] != ['trn', 'quota', region] or
+                    trn[5] != str(data['context']['account']) or
+                    trn[6] != identity['ProviderCode'] + '/' + identity['QuotaCode']):
+                raise ValueError('Quota TRN does not bind account, region and quota identity')
+            key = json.dumps([identity, item.get('object_scope')], sort_keys=True)
+            if key in identities:
+                raise ValueError('Conflicting or duplicate quota/object calculation')
+            identities.add(key)
+            # Only the same selected quota object supplies adjustability and limit.
+            limit = count(quota['TotalQuota'], 'TotalQuota')
+            if item.get('usage_mode') == 'quota_total':
+                if item.get('object_scope'):
+                    raise ValueError('Quota total cannot be applied to an individual object')
+                usage = quota['TotalUsage']
+                if not isinstance(usage, dict) or usage.get('Unit') not in ('个', 'count', 'Count'):
+                    raise ValueError('Unrecognized count unit')
+                used = count(usage['Value'], 'TotalUsage.Value')
+            elif item.get('usage_mode') == 'object_counter':
+                # Accept an API-provided quota counter only, not len(arbitrarily filtered rules).
+                obj = evidence.read(item['usage_object_ref'])
+                if pointer(obj, item['object_id_pointer']) != item.get('object_scope'):
+                    raise ValueError('Usage counter belongs to another object')
+                if item.get('accounting_verified') is not True or not item.get('accounting_basis'):
+                    raise ValueError('Counter semantics/default-rule inclusion unresolved')
+                used = count(pointer(obj, item['counter_pointer']), 'object quota counter')
+            else:
+                raise ValueError('Use quota_total or a verified object_counter; ambiguous rule counting remains unknown')
+            growth = count(item['growth'], 'growth')
+            row.update(quota_identity=identity, limit=limit, used=used, growth=growth,
+                       remaining=limit-used, remaining_after=limit-used-growth,
+                       utilization_percent=round(100*used/limit, 6) if limit else None,
+                       applicable_type=quota.get('ApplicableType'),
+                       applicable_value_raw=quota.get('ApplicableValue'),
+                       status='fits' if used+growth <= limit else 'exceeds',
+                       quota_ref=item['quota_ref'])
+            if item['usage_mode'] == 'object_counter':
+                row['calculation_status'] = row['status']
+                row['status'] = 'conditional'
+                row['reason'] = ('Object ID/counter is bound, but this generic checker cannot prove the quota applies '
+                                 'to that counter, direction or address family; requires a product accounting adapter')
+        except (KeyError, TypeError, ValueError, IndexError) as exc:
+            row['reason'] = str(exc)
+        rows.append(row)
+    # Duplicate IDs make answer references ambiguous; fail instead of silently picking one.
+    if len({r['id'] for r in rows}) != len(rows):
+        raise ValueError('Duplicate item id')
+    overall = ('unknown' if not rows or any(r['status'] in ('unknown','conditional') for r in rows)
+               else 'exceeds' if any(r['status'] == 'exceeds' for r in rows) else 'fits')
+    result = {'items': rows, 'overall': overall, 'evidence': evidence.used,
+              'boundary': 'Saved quota values only; not creation feasibility or allocation approval'}
+    result['answer_table'] = '\n'.join(['|对象|上限|用量|余量|增量|计划后余量|使用率%|状态|限制|',
+                                        '|---|---:|---:|---:|---:|---:|---:|---|---|'] + [
+        '|'+'|'.join(str(r.get(k, '未知')).replace('|', '\\|').replace('\n', ' ')
+                     for k in ('id','limit','used','remaining','growth','remaining_after','utilization_percent','status','reason'))+'|'
+        for r in rows])
+    result['answer_check'] = verify_claims(result, data.get('answer_claims', []))
+    return result
+
+
+def run(data, evidence=None):
     if not isinstance(data, dict):
         raise ValueError('snapshot must be an object')
+    if data['operation'] == 'capacity_evidence':
+        return capacity_evidence(data, evidence)
     if data['operation'] == 'capacity':
         return capacity(data['items'])
     if data['operation'] == 'addresses':
         return addresses(data['parent'], data['cidrs'])
-    raise ValueError('operation must be capacity or addresses')
+    raise ValueError('operation must be capacity_evidence, capacity or addresses')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--snapshot', required=True)
+    parser.add_argument('--evidence', help='Saved evidence bundle, separate from calculation input')
     args = parser.parse_args()
     try:
         with open(args.snapshot) as f:
-            result = run(json.load(f))
+            bundle = json.loads(Path(args.evidence).read_text()) if args.evidence else None
+            result = run(json.load(f), bundle)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     except (ValueError, KeyError, TypeError, OSError) as exc:
         print(json.dumps({'error': str(exc)}, ensure_ascii=False))
